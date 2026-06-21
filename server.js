@@ -50,6 +50,50 @@ let ws = null;
 let wsReady = false;
 const pending = new Map(); // id -> { resolve, reject, timer }
 
+// We captured the exact connect frame the Control UI sends. The gateway needs
+// the full shape (protocol range, role, scopes, client + device blocks), or it
+// silently closes the socket. We send this exact shape.
+let handshakeIndex = 0;
+let lockedHandshake = null;
+
+// A stable device id for this proxy (any 64-hex string works; the gateway just
+// wants a consistent identifier).
+const DEVICE_ID = crypto.createHash("sha256").update("openclaw-web-proxy-device").digest("hex");
+
+function handshakeVariants() {
+  const t = GATEWAY_TOKEN;
+  return [
+    {
+      type: "req",
+      id: crypto.randomUUID(),
+      method: "connect",
+      params: {
+        minProtocol: 3,
+        maxProtocol: 3,
+        auth: { token: t },
+        caps: ["tool-events"],
+        client: {
+          id: "openclaw-web-proxy",
+          version: "2026.4.25",
+          platform: "node",
+          mode: "webchat",
+        },
+        device: { id: DEVICE_ID },
+        locale: "en-US",
+        role: "operator",
+        scopes: [
+          "operator.admin",
+          "operator.read",
+          "operator.write",
+          "operator.approvals",
+          "operator.pairing",
+        ],
+        userAgent: "openclaw-web-proxy/1.0",
+      },
+    },
+  ];
+}
+
 function buildHeaders() {
   const headers = {};
   if (BASIC_USER || BASIC_PASS) {
@@ -64,16 +108,13 @@ function connectGateway() {
   ws = new WebSocket(GATEWAY_WSS, { headers: buildHeaders() });
 
   ws.on("open", () => {
-    console.log("[gateway] socket open, sending connect handshake");
-    // OpenClaw v3 handshake. The browser sends a connect frame with the token
-    // as the first message (the URL itself carries no ?token=).
-    // If auth fails, check the log for the gateway's error and adjust this frame.
-    sendRaw({
-      type: "req",
-      id: crypto.randomUUID(),
-      method: "connect",
-      params: { auth: { token: GATEWAY_TOKEN } },
-    });
+    const variants = handshakeVariants();
+    const frame = lockedHandshake || variants[handshakeIndex % variants.length];
+    console.log(
+      `[gateway] socket open. Trying handshake variant #${handshakeIndex % variants.length}:`,
+      JSON.stringify({ type: frame.type, method: frame.method || "(none)" })
+    );
+    sendRaw(frame);
   });
 
   ws.on("message", (raw) => {
@@ -87,8 +128,17 @@ function connectGateway() {
     // The handshake reply tells us we're authenticated and ready.
     if (msg.type === "res" && msg.payload && msg.payload.type === "hello-ok") {
       wsReady = true;
+      const variants = handshakeVariants();
+      lockedHandshake = lockedHandshake || variants[handshakeIndex % variants.length];
       const role = msg.payload.auth && msg.payload.auth.role;
-      console.log(`[gateway] hello-ok received. Authenticated as role="${role}". Ready.`);
+      console.log(`[gateway] hello-ok received. Authenticated as role="${role}". Ready. Handshake locked.`);
+      return;
+    }
+
+    // If the gateway sends an explicit error response to our handshake, log it
+    // so we can see exactly which field it dislikes.
+    if (msg.type === "res" && msg.ok === false && !wsReady) {
+      console.error("[gateway] handshake rejected:", JSON.stringify(msg.payload || msg).slice(0, 500));
       return;
     }
 
@@ -105,8 +155,15 @@ function connectGateway() {
     // Everything else (health/node.list events) is background noise — ignore.
   });
 
-  ws.on("close", () => {
-    console.warn("[gateway] socket closed. Reconnecting in 3s...");
+  ws.on("close", (code, reasonBuf) => {
+    const reason = reasonBuf ? reasonBuf.toString() : "";
+    console.warn(`[gateway] socket closed. code=${code} reason="${reason}"`);
+    // If we closed before authenticating and we haven't locked a handshake yet,
+    // advance to the next handshake variant for the next attempt.
+    if (!wsReady && !lockedHandshake) {
+      handshakeIndex++;
+      console.warn(`[gateway] handshake not confirmed; will try variant #${handshakeIndex % handshakeVariants().length} next.`);
+    }
     wsReady = false;
     ws = null;
     setTimeout(connectGateway, 3000);
