@@ -1,0 +1,26 @@
+{
+  "name": "openclaw-chatbot-backend",
+  "version": "1.0.0",
+  "description": "Backend that bridges a website chatbot to an OpenClaw gateway over WebSocket",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js"
+  },
+  "engines": {
+    "node": ">=20.19.0"
+  },
+  "keywords": [
+    "openclaw",
+    "chatbot",
+    "gateway",
+    "websocket"
+  ],
+  "license": "ISC",
+  "dependencies": {
+    "cors": "^2.8.6",
+    "dotenv": "^17.3.1",
+    "express": "^5.2.1",
+    "ws": "^8.19.0"
+  }
+}
