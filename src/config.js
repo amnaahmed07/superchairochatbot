@@ -81,7 +81,7 @@ const config = {
 
     // Hard ceiling for a single chat turn. The agent can take a while before the
     // first token (large context injection), so this is generous by default.
-    requestTimeoutMs: int(process.env.OPENCLAW_REQUEST_TIMEOUT_MS, 180000),
+    requestTimeoutMs: int(process.env.OPENCLAW_REQUEST_TIMEOUT_MS, 240000),
 
     // If the assistant stops streaming new text for this long after it has begun
     // replying, we treat the turn as complete. This is the fallback used when no
