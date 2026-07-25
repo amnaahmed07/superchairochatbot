@@ -95,9 +95,9 @@ xCloud → OpenClaw → Status) and approve that device. The backend retries eve
 connects automatically once approved. After that it reuses a device token — no more
 approvals, even across restarts (as long as `OPENCLAW_DEVICE_KEY` stays the same).
 
-> The device id for the included key is
-> `9a5e35e4935dea9e1baf63b442bacf8c0e01140c89d013da18adefeb8366e939`.
-> To use your own key instead: `node -e "const d=require('./src/deviceIdentity');const i=d.generateIdentity();console.log('id',i.deviceId);console.log('key',Buffer.from(i.privateKeyPem).toString('base64'))"`
+> No device key ships with this repo — generate your own and keep it out of git.
+> It prints the id to approve and the value for `OPENCLAW_DEVICE_KEY`:
+> `node -e "const d=require('./src/deviceIdentity');const i=d.generateIdentity();console.log('id',i.deviceId);console.log('key',Buffer.from(i.privateKeyPem).toString('base64'))"`
 
 ### 5. Verify
 Open `https://your-site-domain/api/health` → should say `gateway: connected`.
