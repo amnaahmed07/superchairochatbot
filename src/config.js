@@ -79,9 +79,12 @@ const config = {
     // How long to wait for the connect handshake to complete.
     connectTimeoutMs: int(process.env.OPENCLAW_CONNECT_TIMEOUT_MS, 15000),
 
-    // Hard ceiling for a single chat turn. The agent can take a while before the
-    // first token (large context injection), so this is generous by default.
-    requestTimeoutMs: int(process.env.OPENCLAW_REQUEST_TIMEOUT_MS, 240000),
+    // Hard ceiling for a single chat turn. Keep this BELOW the proxy in front of
+    // the app: Cloudflare (and most managed hosts) cut a request at ~100s and
+    // return a 524, so anything longer can never reach the browser — the turn
+    // just dies as an opaque gateway error instead of a readable message.
+    // Raise it only for a loopback / no-proxy deployment.
+    requestTimeoutMs: int(process.env.OPENCLAW_REQUEST_TIMEOUT_MS, 90000),
 
     // If the assistant stops streaming new text for this long after it has begun
     // replying, we treat the turn as complete. This is the fallback used when no

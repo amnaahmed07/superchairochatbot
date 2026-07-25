@@ -679,7 +679,7 @@
 
   <script>
     // Your deployed backend URL.
-    const CLAW_BACKEND = 'https://superchairochatbot-production.up.railway.app';
+    const CLAW_BACKEND = 'https://supanova-creative-chatbot.1wp.site';
     let clawSession = localStorage.getItem('clawSession') || null;
     let clawGreeted = false;
     let clawBusy = false; // prevents overlapping sends (which collide on the agent)
@@ -731,18 +731,43 @@
       const bubble = clawAddMsg('…', 'bot');
       let got = false;
 
+      // Watchdogs. A failed agent turn can stream nothing at all, and the proxy in
+      // front of the backend holds the connection open regardless — without these
+      // the bubble sits on "…" forever and the composer stays locked.
+      const IDLE_MS = 45000;  // no bytes for this long -> stop waiting
+      const HARD_MS = 100000; // absolute ceiling for one turn
+      const controller = new AbortController();
+      let timedOut = false;
+      let idleTimer = null;
+      const giveUp = () => { timedOut = true; controller.abort(); };
+      const hardTimer = setTimeout(giveUp, HARD_MS);
+      const pokeIdle = () => {
+        clearTimeout(idleTimer);
+        idleTimer = setTimeout(giveUp, IDLE_MS);
+      };
+      pokeIdle();
+
       try {
         const res = await fetch(CLAW_BACKEND + '/api/chat/stream', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ message: text, sessionKey: clawSession })
+          body: JSON.stringify({ message: text, sessionKey: clawSession }),
+          signal: controller.signal
         });
+        // Errors (503 while the gateway reconnects, 5xx from the proxy) come back
+        // as JSON or HTML, not SSE — surface them instead of parsing them as a stream.
+        if (!res.ok || !res.body) {
+          let detail = '';
+          try { detail = (await res.json()).error || ''; } catch (_) {}
+          throw new Error(detail || 'The concierge is unavailable right now (error ' + res.status + ').');
+        }
         const reader = res.body.getReader();
         const decoder = new TextDecoder();
         let buffer = '';
         while (true) {
           const { value, done } = await reader.read();
           if (done) break;
+          pokeIdle(); // bytes arrived — reset the silence watchdog
           buffer += decoder.decode(value, { stream: true });
           const parts = buffer.split('\n\n');
           buffer = parts.pop();
@@ -766,8 +791,16 @@
         }
         if (!got && bubble.textContent === '…') bubble.textContent = 'Sorry, no response. Please try again.';
       } catch (err) {
-        bubble.textContent = 'Connection error. Please try again.';
+        if (timedOut) {
+          bubble.textContent = got
+            ? bubble.textContent + '\n\n(The reply was cut short — please ask again.)'
+            : 'That is taking longer than usual — the concierge may be busy. Please try again in a moment.';
+        } else {
+          bubble.textContent = err.message || 'Connection error. Please try again.';
+        }
       } finally {
+        clearTimeout(hardTimer);
+        clearTimeout(idleTimer);
         clawSetBusy(false);
         document.getElementById('claw-input').focus();
         box.scrollTop = box.scrollHeight;
