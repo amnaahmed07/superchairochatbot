@@ -735,7 +735,10 @@
       // front of the backend holds the connection open regardless — without these
       // the bubble sits on "…" forever and the composer stays locked.
       const IDLE_MS = 45000;  // no bytes for this long -> stop waiting
-      const HARD_MS = 100000; // absolute ceiling for one turn
+                              // (backend sends a keepalive every 15s, so this
+                              //  only trips after ~3 missed beats)
+      const HARD_MS = 240000; // absolute ceiling for one turn; the agent needs
+                              // ~90s to start a run, so 100s cut off real replies
       const controller = new AbortController();
       let timedOut = false;
       let idleTimer = null;

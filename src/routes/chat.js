@@ -66,8 +66,18 @@ module.exports = function chatRoutes(client) {
     };
 
     let closed = false;
+
+    // The agent can take ~90s to start a run before its first token. A stream
+    // that stays completely silent that long gets buffered or dropped by proxies
+    // in between, and trips the widget's idle watchdog. An SSE comment every 15s
+    // keeps the turn visibly alive; comments carry no event, so parsers ignore it.
+    const heartbeat = setInterval(() => {
+      if (!closed) res.write(': keepalive\n\n');
+    }, 15000);
+
     req.on('close', () => {
       closed = true;
+      clearInterval(heartbeat);
     });
 
     try {
@@ -92,6 +102,8 @@ module.exports = function chatRoutes(client) {
         send('error', { error: err.message });
         res.end();
       }
+    } finally {
+      clearInterval(heartbeat);
     }
   });
 
