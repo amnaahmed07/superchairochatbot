@@ -327,11 +327,36 @@ class OpenClawClient extends EventEmitter {
     }
   }
 
+  // Gateway builds disagree on where the session identifier lives on an event
+  // payload (v2026.4.x moved it), so accept every shape we've seen rather than
+  // silently dropping the frame — a missed key here looks exactly like an agent
+  // that never replied.
+  _eventSessionKey(payload) {
+    if (!payload) return null;
+    return (
+      payload.sessionKey ||
+      payload.key ||
+      payload.sessionId ||
+      payload.session?.key ||
+      payload.session?.sessionKey ||
+      payload.session?.id ||
+      null
+    );
+  }
+
   _routeSessionEvent(frame) {
-    const sessionKey = frame.payload && frame.payload.sessionKey;
+    const sessionKey = this._eventSessionKey(frame.payload);
     if (!sessionKey) return;
     const handlers = this.sessionHandlers.get(sessionKey);
-    if (!handlers) return;
+    if (!handlers) {
+      if (this.cfg.debug) {
+        this.log.info?.(
+          `[openclaw] event "${frame.event}" for unwatched session ${sessionKey} ` +
+            `(watching: ${[...this.sessionHandlers.keys()].join(', ') || 'none'})`
+        );
+      }
+      return;
+    }
     for (const h of handlers) {
       try {
         h(frame);
@@ -505,14 +530,29 @@ class OpenClawClient extends EventEmitter {
           return;
         }
 
-        // Fallback transcript channel (used by older builds, and carries the
-        // final assistant message). Only treat assistant messages as the reply.
-        if (event === 'session.message' || event === 'chat.message') {
-          const role = payload.message?.role || payload.role;
-          if (role !== 'assistant') return; // ignore the user echo
-          const text = extractText(payload.message);
-          if (text != null && text.length >= snapshot.length) applySnapshot(text);
+        // Fallback transcript channels. The exact event name is build-dependent
+        // (session.message / chat.message / newer v2026.4.x names), so match
+        // loosely — an unrecognised name is indistinguishable from an agent that
+        // never replied, which is the failure this guards against.
+        if (/message|chat|delta|assistant/i.test(event)) {
+          const msg = payload.message || payload.data?.message || payload;
+          const role = msg?.role || payload.role;
+
+          // Never mistake the user echo for the reply: skip anything explicitly
+          // non-assistant, and if the build omits the role, skip text identical
+          // to what we just sent.
+          if (role && role !== 'assistant') return;
+          const text = extractText(msg);
+          if (text == null) return;
+          if (!role && text.trim() === message.trim()) return;
+
+          if (text.length >= snapshot.length) applySnapshot(text);
+          if (payload.state === 'final' || payload.done === true) finish();
           return;
+        }
+
+        if (this.cfg.debug) {
+          this.log.info?.(`[openclaw] unhandled session event "${event}"`);
         }
       };
 
